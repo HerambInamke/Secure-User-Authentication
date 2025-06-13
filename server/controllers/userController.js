@@ -1,24 +1,35 @@
 const User = require('../models/User');
+const bcrypt = require('bcryptjs');
 
-// Get user profile
-exports.getProfile = async (req, res) => {
+// Get all users
+exports.getAllUsers = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id);
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
+    const users = await User.find().select('-password');
     res.json({
       success: true,
-      data: user.getPublicProfile()
+      data: users
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Failed to fetch profile',
+      message: 'Error fetching users',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Get user profile
+exports.getProfile = async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id).select('-password');
+    res.json({
+      success: true,
+      data: user
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching profile',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
@@ -27,39 +38,22 @@ exports.getProfile = async (req, res) => {
 // Update user profile
 exports.updateProfile = async (req, res) => {
   try {
-    const updates = req.body;
-    const allowedUpdates = ['firstName', 'lastName', 'phoneNumber', 'address'];
+    const { fullName, email, phoneNumber, address } = req.body;
     
-    // Filter out non-allowed updates
-    const filteredUpdates = Object.keys(updates)
-      .filter(key => allowedUpdates.includes(key))
-      .reduce((obj, key) => {
-        obj[key] = updates[key];
-        return obj;
-      }, {});
-
     const user = await User.findByIdAndUpdate(
       req.user._id,
-      { $set: filteredUpdates },
+      { fullName, email, phoneNumber, address },
       { new: true, runValidators: true }
-    );
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
+    ).select('-password');
 
     res.json({
       success: true,
-      message: 'Profile updated successfully',
-      data: user.getPublicProfile()
+      data: user
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Failed to update profile',
+      message: 'Error updating profile',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
@@ -69,65 +63,39 @@ exports.updateProfile = async (req, res) => {
 exports.changePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
-
     const user = await User.findById(req.user._id);
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
 
     // Verify current password
-    const isMatch = await user.comparePassword(currentPassword);
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
     if (!isMatch) {
-      return res.status(401).json({
+      return res.status(400).json({
         success: false,
         message: 'Current password is incorrect'
       });
     }
 
-    // Update password
-    user.password = newPassword;
+    // Hash new password
+    const salt = await bcrypt.genSalt(10);
+    user.password = await bcrypt.hash(newPassword, salt);
     await user.save();
 
     res.json({
       success: true,
-      message: 'Password changed successfully'
+      message: 'Password updated successfully'
     });
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Failed to change password',
+      message: 'Error changing password',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
 
-// Get all users (Admin/HR only)
-exports.getAllUsers = async (req, res) => {
-  try {
-    const users = await User.find({})
-      .select('-password')
-      .sort({ createdAt: -1 });
-
-    res.json({
-      success: true,
-      data: users
-    });
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch users',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-};
-
-// Get user by ID (Admin/HR only)
+// Get user by ID
 exports.getUserById = async (req, res) => {
   try {
-    const user = await User.findById(req.params.id).select('-password');
+    const user = await User.findById(req.params.userId).select('-password');
     
     if (!user) {
       return res.status(404).json({
@@ -143,7 +111,63 @@ exports.getUserById = async (req, res) => {
   } catch (error) {
     res.status(500).json({
       success: false,
-      message: 'Failed to fetch user',
+      message: 'Error fetching user',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Update user (admin only)
+exports.updateUser = async (req, res) => {
+  try {
+    const { fullName, email, phoneNumber, address, role, status } = req.body;
+    
+    const user = await User.findByIdAndUpdate(
+      req.params.userId,
+      { fullName, email, phoneNumber, address, role, status },
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: user
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error updating user',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+// Delete user (admin only)
+exports.deleteUser = async (req, res) => {
+  try {
+    const user = await User.findByIdAndDelete(req.params.userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'User deleted successfully'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error deleting user',
       error: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
